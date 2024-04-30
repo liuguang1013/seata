@@ -44,20 +44,26 @@ public class AlibabaDubboTransactionPropagationFilter implements Filter {
         if (!DubboConstants.ALIBABADUBBO) {
             return invoker.invoke(invocation);
         }
+        // 获取当前事务 XID、BRANCH_TYPE
         String xid = RootContext.getXID();
         BranchType branchType = RootContext.getBranchType();
 
+        // 获取 RPC 调用传递过来的 XID、BRANCH_TYPE
         String rpcXid = getRpcXid();
         String rpcBranchType = RpcContext.getContext().getAttachment(RootContext.KEY_BRANCH_TYPE);
         if (LOGGER.isDebugEnabled()) {
             LOGGER.debug("xid in RootContext[{}] xid in RpcContext[{}]", xid, rpcXid);
         }
         boolean bind = false;
+        // 发送请求
         if (xid != null) {
+            // Consumer：把 XID、BRANCH_TYPE 置入 RPC 的 attachment 中
             RpcContext.getContext().setAttachment(RootContext.KEY_XID, xid);
             RpcContext.getContext().setAttachment(RootContext.KEY_BRANCH_TYPE, branchType.name());
         } else {
+            // 接收请求
             if (rpcXid != null) {
+                // 将 rpc 获取的 XID、BRANCH_TYPE 放入本地的分布式事物容器中
                 RootContext.bind(rpcXid);
                 if (StringUtils.equals(BranchType.TCC.name(), rpcBranchType)) {
                     RootContext.bindBranchType(BranchType.TCC);
@@ -71,8 +77,10 @@ public class AlibabaDubboTransactionPropagationFilter implements Filter {
         try {
             return invoker.invoke(invocation);
         } finally {
+            // 接收请求：在当前服务中，处理完请求相应请求端
             if (bind) {
                 BranchType previousBranchType = RootContext.getBranchType();
+                // 解除 XID、BRANCH_TYPE 在本地容器中绑定
                 String unbindXid = RootContext.unbind();
                 if (BranchType.TCC == previousBranchType) {
                     RootContext.unbindBranchType();
@@ -80,10 +88,12 @@ public class AlibabaDubboTransactionPropagationFilter implements Filter {
                 if (LOGGER.isDebugEnabled()) {
                     LOGGER.debug("unbind xid [{}] branchType [{}] from RootContext", unbindXid, previousBranchType);
                 }
+                //
                 if (!rpcXid.equalsIgnoreCase(unbindXid)) {
                     LOGGER.warn("xid in change during RPC from {} to {},branchType from {} to {}", rpcXid, unbindXid,
                             rpcBranchType != null ? rpcBranchType : "AT", previousBranchType);
                     if (unbindXid != null) {
+                        //
                         RootContext.bind(unbindXid);
                         LOGGER.warn("bind xid [{}] back to RootContext", unbindXid);
                         if (BranchType.TCC == previousBranchType) {
@@ -93,6 +103,7 @@ public class AlibabaDubboTransactionPropagationFilter implements Filter {
                     }
                 }
             }
+            // 无论是 请求端、请求端 都要移除 RpcContext 容器中的属性值
             RpcContext.getContext().removeAttachment(RootContext.KEY_XID);
             RpcContext.getContext().removeAttachment(RootContext.KEY_BRANCH_TYPE);
             RpcContext.getServerContext().removeAttachment(RootContext.KEY_XID);
